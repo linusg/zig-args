@@ -1,9 +1,10 @@
 const std = @import("std");
 const argsParser = @import("args");
 
-pub fn main() !u8 {
-    const argsAllocator = std.heap.page_allocator;
-
+pub fn main(init: std.process.Init) !u8 {
+    const args = init.minimal.args;
+    const gpa = init.gpa;
+    const io = init.io;
     const options = argsParser.parseWithVerbForCurrentProcess(
         struct {
             // this declares long option that can come before or after verb
@@ -39,8 +40,9 @@ pub fn main() !u8 {
             forward: void,
             @"zero-sized": struct {},
         },
-        argsAllocator,
-        .print,
+        args,
+        gpa,
+        .{ .print = io },
     ) catch return 1;
     defer options.deinit();
 

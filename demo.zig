@@ -1,9 +1,10 @@
 const std = @import("std");
 const argsParser = @import("args");
 
-pub fn main() !u8 {
-    const argsAllocator = std.heap.page_allocator;
-
+pub fn main(init: std.process.Init) !u8 {
+    const args = init.minimal.args;
+    const gpa = init.gpa;
+    const io = init.io;
     const Options = struct {
         // This declares long options for double hyphen
         output: ?[]const u8 = null,
@@ -39,7 +40,7 @@ pub fn main() !u8 {
         };
     };
 
-    const options = argsParser.parseForCurrentProcess(Options, argsAllocator, .print) catch return 1;
+    const options = argsParser.parseForCurrentProcess(Options, args, gpa, .{ .print = io }) catch return 1;
     defer options.deinit();
 
     std.debug.print("executable name: {?s}\n", .{options.executable_name});
@@ -58,7 +59,7 @@ pub fn main() !u8 {
     }
 
     var writer_buf: [128]u8 = undefined;
-    var stdout = std.fs.File.stdout().writer(&writer_buf);
+    var stdout = std.Io.File.stdout().writer(io, &writer_buf);
     defer stdout.interface.flush() catch unreachable;
     try argsParser.printHelp(Options, options.executable_name orelse "demo", &stdout.interface);
     return 0;

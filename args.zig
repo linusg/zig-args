@@ -2,16 +2,17 @@ const std = @import("std");
 
 /// Parses arguments for the given specification and our current process.
 /// - `Spec` is the configuration of the arguments.
-/// - `allocator` is the allocator that is used to allocate all required memory
+/// - `args` are the process arguments obtained from `std.process.Init`
+/// - `gpa` is the allocator that is used to allocate all required memory
 /// - `error_handling` defines how parser errors will be handled.
-pub fn parseForCurrentProcess(comptime Spec: type, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Spec, null) {
-    // Use argsWithAllocator for portability.
-    // All data allocated by the ArgIterator is freed at the end of the function.
+pub fn parseForCurrentProcess(comptime Spec: type, args: std.process.Args, gpa: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Spec, null) {
+    // Use iterateAllocator for portability.
+    // All data allocated by the Args.Iterator is freed at the end of the function.
     // Data returned to the user is always duplicated using the allocator.
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    var args_iterator = try args.iterateAllocator(gpa);
+    defer args_iterator.deinit();
 
-    const executable_name = args.next() orelse {
+    const executable_name = args_iterator.next() orelse {
         try error_handling.process(error.NoExecutableName, Error{
             .option = "",
             .kind = .missing_executable_name,
@@ -21,25 +22,26 @@ pub fn parseForCurrentProcess(comptime Spec: type, allocator: std.mem.Allocator,
         return error.NoExecutableName;
     };
 
-    var result = try parseInternal(Spec, null, &args, allocator, error_handling);
+    var result = try parseInternal(Spec, null, &args_iterator, gpa, error_handling);
 
-    result.executable_name = try allocator.dupeZ(u8, executable_name);
+    result.executable_name = try gpa.dupeZ(u8, executable_name);
 
     return result;
 }
 
 /// Parses arguments for the given specification and our current process.
 /// - `Spec` is the configuration of the arguments.
-/// - `allocator` is the allocator that is used to allocate all required memory
+/// - `args` are the process arguments obtained from `std.process.Init`
+/// - `gpa` is the allocator that is used to allocate all required memory
 /// - `error_handling` defines how parser errors will be handled.
-pub fn parseWithVerbForCurrentProcess(comptime Spec: type, comptime Verb: type, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Spec, Verb) {
-    // Use argsWithAllocator for portability.
-    // All data allocated by the ArgIterator is freed at the end of the function.
+pub fn parseWithVerbForCurrentProcess(comptime Spec: type, comptime Verb: type, args: std.process.Args, gpa: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Spec, Verb) {
+    // Use iterateAllocator for portability.
+    // All data allocated by the Args.Iterator is freed at the end of the function.
     // Data returned to the user is always duplicated using the allocator.
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    var args_iterator = try args.iterateAllocator(gpa);
+    defer args_iterator.deinit();
 
-    const executable_name = args.next() orelse {
+    const executable_name = args_iterator.next() orelse {
         try error_handling.process(error.NoExecutableName, Error{
             .option = "",
             .kind = .missing_executable_name,
@@ -49,27 +51,27 @@ pub fn parseWithVerbForCurrentProcess(comptime Spec: type, comptime Verb: type, 
         return error.NoExecutableName;
     };
 
-    var result = try parseInternal(Spec, Verb, &args, allocator, error_handling);
+    var result = try parseInternal(Spec, Verb, &args_iterator, gpa, error_handling);
 
-    result.executable_name = try allocator.dupeZ(u8, executable_name);
+    result.executable_name = try gpa.dupeZ(u8, executable_name);
 
     return result;
 }
 
 /// Parses arguments for the given specification.
 /// - `Generic` is the configuration of the arguments.
-/// - `args_iterator` is a pointer to an std.process.ArgIterator that will yield the command line arguments.
-/// - `allocator` is the allocator that is used to allocate all required memory
+/// - `args_iterator` is a pointer to a `std.process.Args.Iterator` that will yield the command line arguments.
+/// - `gpa` is the allocator that is used to allocate all required memory
 /// - `error_handling` defines how parser errors will be handled.
 ///
 /// Note that `.executable_name` in the result will not be set!
 pub fn parse(
     comptime Generic: type,
     args_iterator: anytype,
-    allocator: std.mem.Allocator,
-    comptime error_handling: ErrorHandling,
+    gpa: std.mem.Allocator,
+    error_handling: ErrorHandling,
 ) !ParseArgsResult(Generic, null) {
-    return parseInternal(Generic, null, args_iterator, allocator, error_handling);
+    return parseInternal(Generic, null, args_iterator, gpa, error_handling);
 }
 
 /// Parses arguments for the given specification using a `Verb` method.
@@ -77,8 +79,8 @@ pub fn parse(
 /// be considered a sub-command that provides more specific options.
 /// - `Generic` is the configuration of the arguments.
 /// - `Verb` is the configuration of the verbs.
-/// - `args_iterator` is a pointer to an std.process.ArgIterator that will yield the command line arguments.
-/// - `allocator` is the allocator that is used to allocate all required memory
+/// - `args_iterator` is a pointer to a `std.process.Args.Iterator` that will yield the command line arguments.
+/// - `gpa` is the allocator that is used to allocate all required memory
 /// - `error_handling` defines how parser errors will be handled.
 ///
 /// Note that `.executable_name` in the result will not be set!
@@ -86,10 +88,10 @@ pub fn parseWithVerb(
     comptime Generic: type,
     comptime Verb: type,
     args_iterator: anytype,
-    allocator: std.mem.Allocator,
-    comptime error_handling: ErrorHandling,
+    gpa: std.mem.Allocator,
+    error_handling: ErrorHandling,
 ) !ParseArgsResult(Generic, Verb) {
-    return parseInternal(Generic, Verb, args_iterator, allocator, error_handling);
+    return parseInternal(Generic, Verb, args_iterator, gpa, error_handling);
 }
 
 /// Same as parse, but with anytype argument for testability
@@ -97,12 +99,12 @@ fn parseInternal(
     comptime Generic: type,
     comptime MaybeVerb: ?type,
     args_iterator: anytype,
-    allocator: std.mem.Allocator,
-    comptime error_handling: ErrorHandling,
+    gpa: std.mem.Allocator,
+    error_handling: ErrorHandling,
 ) !ParseArgsResult(Generic, MaybeVerb) {
-    var result = ParseArgsResult(Generic, MaybeVerb){
-        .arena = std.heap.ArenaAllocator.init(allocator),
-        .options = Generic{},
+    var result: ParseArgsResult(Generic, MaybeVerb) = .{
+        .arena = .init(gpa),
+        .options = .{},
         .verb = if (MaybeVerb != null) null else {}, // no verb by default
         .positionals = undefined,
         .executable_name = null,
@@ -110,7 +112,7 @@ fn parseInternal(
     errdefer result.arena.deinit();
     var result_arena_allocator = result.arena.allocator();
 
-    var arglist: std.array_list.Managed([:0]const u8) = .init(allocator);
+    var arglist: std.array_list.Managed([:0]const u8) = .init(gpa);
     defer arglist.deinit();
 
     var last_error: ?anyerror = null;
@@ -462,9 +464,9 @@ test parseInt {
 }
 
 /// Converts an argument value to the target type.
-fn convertArgumentValue(comptime T: type, allocator: std.mem.Allocator, textInput: []const u8) !T {
+fn convertArgumentValue(comptime T: type, gpa: std.mem.Allocator, textInput: []const u8) !T {
     switch (@typeInfo(T)) {
-        .optional => |opt| return try convertArgumentValue(opt.child, allocator, textInput),
+        .optional => |opt| return try convertArgumentValue(opt.child, gpa, textInput),
         .bool => if (textInput.len > 0)
             return try parseBoolean(textInput)
         else
@@ -494,7 +496,7 @@ fn convertArgumentValue(comptime T: type, allocator: std.mem.Allocator, textInpu
                 // If the type contains a sentinel dupe the text input to a new buffer.
                 // This is equivalent to allocator.dupeZ but works with any sentinel.
                 if (comptime std.meta.sentinel(T)) |sentinel| {
-                    const data = try allocator.alloc(u8, textInput.len + 1);
+                    const data = try gpa.alloc(u8, textInput.len + 1);
                     @memcpy(data[0..textInput.len], textInput);
                     data[textInput.len] = sentinel;
 
@@ -516,7 +518,7 @@ fn parseOption(
     arena: std.mem.Allocator,
     target_struct: *Spec,
     args: anytype,
-    comptime error_handling: ErrorHandling,
+    error_handling: ErrorHandling,
     last_error: *?anyerror,
     /// The name of the option that is currently parsed.
     comptime name: []const u8,
@@ -567,9 +569,9 @@ pub const ErrorCollection = struct {
     arena: std.heap.ArenaAllocator,
     list: std.ArrayList(Error),
 
-    pub fn init(allocator: std.mem.Allocator) Self {
+    pub fn init(gpa: std.mem.Allocator) Self {
         return Self{
-            .arena = .init(allocator),
+            .arena = .init(gpa),
             .list = .empty,
         };
     }
@@ -586,7 +588,7 @@ pub const ErrorCollection = struct {
 
     /// Appends an error to the collection
     fn insert(self: *Self, err: Error) !void {
-        const dupe = Error{
+        const dupe: Error = .{
             .option = try self.arena.allocator().dupe(u8, err.option),
             .kind = switch (err.kind) {
                 .invalid_value => |v| Error.Kind{
@@ -660,7 +662,7 @@ pub const ErrorHandling = union(enum) {
     silent,
 
     /// Print errors to stderr and return a `error.InvalidArguments`.
-    print,
+    print: std.Io,
 
     /// Collect errors into the error collection and return
     /// `error.InvalidArguments` when any error was encountered.
@@ -670,14 +672,14 @@ pub const ErrorHandling = union(enum) {
     forward: *const fn (err: Error) anyerror!void,
 
     /// Processes an error with the given handling method.
-    fn process(comptime self: Self, src_error: anytype, err: Error) !void {
+    fn process(self: Self, src_error: anytype, err: Error) !void {
         if (@typeInfo(@TypeOf(src_error)) != .error_set)
             @compileError("src_error must be a error union!");
         switch (self) {
             .silent => return src_error,
-            .print => {
+            .print => |io| {
                 var writer_buf: [32]u8 = undefined;
-                var stderr = std.fs.File.stderr().writer(&writer_buf);
+                var stderr = std.Io.File.stderr().writer(io, &writer_buf);
                 defer stderr.interface.flush() catch {};
                 try stderr.interface.print("{f}\n", .{err});
             },
@@ -779,7 +781,7 @@ test "basic parsing (no verbs)" {
         "special",
         "positional 2",
     });
-    var args = try parseInternal(TestGenericOptions, null, &titerator, std.testing.allocator, .print);
+    var args = try parseInternal(TestGenericOptions, null, &titerator, std.testing.allocator, .{ .print = std.testing.io });
     defer args.deinit();
 
     try std.testing.expectEqual(@as(?[:0]const u8, null), args.executable_name);
@@ -815,7 +817,7 @@ test "shorthand parsing (no verbs)" {
         "special",
         "positional 2",
     });
-    var args = try parseInternal(TestGenericOptions, null, &titerator, std.testing.allocator, .print);
+    var args = try parseInternal(TestGenericOptions, null, &titerator, std.testing.allocator, .{ .print = std.testing.io });
     defer args.deinit();
 
     try std.testing.expectEqual(@as(?[:0]const u8, null), args.executable_name);
@@ -853,7 +855,7 @@ test "basic parsing (with verbs)" {
         "positional 2",
         "--cocktail",
     });
-    var args = try parseInternal(TestGenericOptions, TestVerb, &titerator, std.testing.allocator, .print);
+    var args = try parseInternal(TestGenericOptions, TestVerb, &titerator, std.testing.allocator, .{ .print = std.testing.io });
     defer args.deinit();
 
     try std.testing.expectEqual(@as(?[:0]const u8, null), args.executable_name);
@@ -935,7 +937,7 @@ test "shorthand parsing (with verbs)" {
         "positional 2",
         "-c", // --cocktail
     });
-    var args = try parseInternal(TestGenericOptions, TestVerb, &titerator, std.testing.allocator, .print);
+    var args = try parseInternal(TestGenericOptions, TestVerb, &titerator, std.testing.allocator, .{ .print = std.testing.io });
     defer args.deinit();
 
     try std.testing.expectEqual(@as(?[:0]const u8, null), args.executable_name);
@@ -976,7 +978,7 @@ test "strings with sentinel" {
         null,
         &titerator,
         std.testing.allocator,
-        .print,
+        .{ .print = std.testing.io },
     );
     defer args.deinit();
 
@@ -1012,7 +1014,7 @@ test "index of raw indicator --" {
         null,
         &titerator,
         std.testing.allocator,
-        .print,
+        .{ .print = std.testing.io },
     );
     defer args.deinit();
 
